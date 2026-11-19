@@ -1,0 +1,99 @@
+# เข้าห้อง
+
+Next.js 15 / React 19 / Supabase ระบบตารางเรียนและเช็คชื่อ GPS เวลาท้องถิ่น Asia/Bangkok
+
+## เริ่มใช้งาน
+
+ต้องใช้ Node.js 22.18 ขึ้นไป, C++ compiler สำหรับทดสอบ shared firmware protocol และ Docker Desktop สำหรับ Supabase ในเครื่อง
+
+```sh
+npm install
+npm run db:start
+cp .env.example .env.local
+npx supabase status
+```
+
+ใส่ URL, anon key, service role key จาก Supabase ใน `.env.local` ตั้ง SEED_PASSWORD อย่างน้อย 12 ตัวอักษร และสร้าง DEVICE_ENCRYPTION_KEY เป็น hex 32 bytes ด้วย `node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"` ห้ามส่ง secret หรือใส่ service role key ในตัวแปร NEXT_PUBLIC
+
+ฐานข้อมูลใหม่หรือฐานทดสอบที่ลบข้อมูลได้เท่านั้น:
+
+```sh
+npm run db:reset
+npm run db:seed -- --confirm-test-project
+npm run dev
+```
+
+ฐานที่มีข้อมูลอยู่แล้วให้ใช้ migration เพิ่มเติม แทนการ reset: `npx supabase migration up` สำหรับ local หรือ `npx supabase db push` สำหรับโปรเจกต์ที่ link ไว้ ตรวจเป้าหมายก่อนรัน จากนั้น seed ใช้ได้กับโปรเจกต์ทดสอบเท่านั้น
+
+เปิด http://localhost:3000 เข้าระบบด้วยรหัสผู้ใช้และ SEED_PASSWORD:
+
+- admin01: จัดการพิกัดห้อง ยืนยันพิกัดบอร์ด และตั้งค่าช่วงเวลา
+- teacher01–teacher04: วิชาของอาจารย์แต่ละคน เลือกคาบ เปิดนอกตาราง เซสชันสด QR คู่เลข 4 ตัว และรายงาน
+- 68001021–68001040: ลงทะเบียนครบ 8 วิชา วิชาวันนี้ ตารางรายสัปดาห์ เช็คชื่อ และประวัติ
+
+ห้องจริงทั้ง 6 ห้องเริ่มด้วยพิกัด null ต้องให้แอดมินกรอกพิกัดจริงก่อนเปิดเช็คชื่อ การ seed ซ้ำจะรักษาพิกัดที่กรอกแล้วไว้ ไม่มีการสร้างบอร์ดที่มีพิกัดสมมติใน seed นี้ บัญชีเก่าที่มีอยู่จะไม่เปลี่ยนรหัสผ่าน
+
+## ตารางเรียน
+
+ข้อมูลทั้งหมดอยู่ที่ `src/data/timetable.json`: 8 วิชา 12 คาบ ภาค 1/2569 วันที่ 24 ส.ค.–14 ธ.ค. 2569, อาจารย์ตัวอย่าง, ห้อง และค่าเริ่มต้นช่วงเวลา เวลาสิ้นสุดเป็นค่าประมาณ แก้ไฟล์นี้แล้ว seed ซ้ำเพื่ออัปเดตคาบเดิม (หากเปลี่ยนวัน/เวลาเริ่ม จะเพิ่มคาบใหม่ ต้องตรวจและลบคาบเดิมในฐานทดสอบด้วย)
+
+คาบใช้ schedule_id + session_date เป็นเอกลักษณ์ นักศึกษาจะเห็นวิชาที่ตนลงทะเบียนในภาคนั้นเท่านั้น รวมคาบซ้ำวิชาเดียวกันคนละเวลาเป็นคนละรายการ วันไม่มีเรียนแสดง “วันนี้ไม่มีเรียน” ไม่สร้าง session ทั้งเทอมล่วงหน้า
+
+ถ้าเคยรัน seed รุ่นเก่า วิชา/ห้องตัวอย่างเก่าจะยังอยู่เพื่อรักษาประวัติ ใช้ฐานทดสอบใหม่เพื่อดูข้อมูลชุดนี้ล้วน ๆ
+
+## การเช็คชื่อ
+
+`/check-in?session=UUID` เลือก QR หรือเลข 4 ตัวก่อนอ่าน GPS ส่วน `/c?session=UUID&token=...` ข้ามการเลือกวิธี กล้องใช้ html5-qrcode 2.3.8 และเซสชันสดสร้าง QR ด้วย qrcodejs 1.0.0 โหลดจาก jsDelivr เมื่อใช้ฟีเจอร์นั้น (ต้องมีอินเทอร์เน็ต) หากกล้องถูกปฏิเสธหรือโหลดไม่ได้ สลับไปใส่เลขได้ทันที การติดตั้ง npm ในสภาพแวดล้อมพัฒนานี้เข้าถึง registry ไม่ได้ จึงเลือกโหลดไลบรารีเวอร์ชันที่ตรึงไว้ตอนใช้งาน
+
+รหัสหมุนทุก 30 วินาทีจาก HMAC-SHA256 ใช้ secret สุ่ม crypto 32 bytes (เข้ารหัส AES-256-GCM ในฐานข้อมูล) หรือ device secret ของบอร์ดที่ active ในห้องนั้น ยอมรับ counter ปัจจุบันและก่อนหน้าเท่านั้น API ตรวจรหัสใน session ที่ส่งมา ใช้ authenticated user จาก cookie ไม่เชื่อ student ID จาก client การตรวจ enrollment, เวลา, GPS, รัศมี, ความแม่นยำ, ล็อกเลขผิด และการเขียน log อยู่ใน transaction ที่ serialize ต่อ session
+
+ผิดครบ 5 ครั้งล็อกใส่เลข 5 นาที บันทึก rejected / Invalid code ทุกครั้งที่ผิด ขณะล็อกจะปฏิเสธคำขอใส่เลขทั้งหมดและบันทึกเหตุผลล็อก QR ยังต้องผ่านการตรวจ QR/GPS ตามเดิม ห้ามให้ browser เรียก mutation RPC โดยตรง จำกัดสิทธิ์ RPC ไว้ service_role เท่านั้น
+
+เปิดคาบก่อนเวลาเริ่มตามที่ตั้งไว้ (15 นาที) สายเมื่อเกินเวลาเริ่ม + 15 นาที status ยังเป็น present และ is_late=true คาบสิ้นสุด + 10 นาทีถือว่าปิดทันทีทุก read/check-in มี pg_cron อัปเดตสถานะในฐานทุกนาทีด้วย ตั้งค่าผ่านหน้าแอดมิน มีผลต่อ session ที่เปิดใหม่
+
+รายงานนับเฉพาะ session ที่เปิดจริง รวมที่กำลังเปิดอยู่ ไม่คำนวณจำนวนคาบจากตารางทั้งเทอม แสดงวิธี QR/เลข 4 ตัว/RFID ธงตรวจสอบ และป้ายมาสาย ส่วนนี้แสดง RFID ที่มีอยู่ในฐาน แต่ยังไม่ได้เพิ่ม device/RFID ingestion หรือระบบตั้งธงอัตโนมัติใหม่
+
+GPS และกล้องบนมือถือจำเป็นต้องใช้ HTTPS (localhost ใช้ได้เฉพาะเครื่องเดียวกัน) ไม่ติดตามตำแหน่งระหว่างวัน
+
+## เว็บกับเฟิร์มแวร์
+
+`firmware/attendance-token.h` เป็น C++ shared protocol พร้อมตัวเชื่อม mbedTLS สำหรับ ESP32 ใน `attendance-token-esp32.h` และ golden vectors ใน `token-vectors.json`:
+
+1. sync เวลา Unix ด้วย NTP, counter=floor(seconds/30)
+2. HMAC-SHA256 ด้วย raw secret bytes บน UTF8 `attendance:v1:SESSION_UUID:` ตามด้วย counter uint64 big endian
+3. QR token = counter + จุด + digest hex; ลิงก์ `/c?session=UUID&token=TOKEN`
+4. เลข = RFC4226 dynamic truncation ของ digest เดียวกัน mod 10000 เติมศูนย์จนครบ 4 หลัก
+
+ตัวทดสอบคอมไพล์ C++ และเทียบ digest/เลขกับเว็บ รวม counter ที่เกิน 32 bits ตัวเชื่อมนี้ยังไม่ใช่เฟิร์มแวร์บอร์ดครบชุด ต้องต่อ provisioning/transport ที่ยืนยันอุปกรณ์เพื่อรับ session UUID และวาด QR/เลขบนจอจริง ห้ามเผย secret ไป browser
+
+## ตรวจสอบ
+
+```sh
+npm test
+npm run typecheck
+npm run build
+npm run test:db
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/attendance.sql
+```
+
+- unit/protocol: วันไทย ขอบเขตเทอม วันไม่มีเรียน สองคาบวันอังคาร สถานะหมดเวลา เลขปัจจุบัน/ก่อนหน้า/หมดอายุ เลขศูนย์นำหน้า encryption และ C++ parity
+- test:db: RLS และสิทธิ์การอ่าน/เขียน ต้องมี Supabase และ seed
+- SQL integration: ห้องไม่มีพิกัด เหตุผลนอกตาราง GPS นอกรัศมี lock 5 ครั้ง/ปลดหลังหมดเวลา rejected logs มาสาย เช็คซ้ำ คาบแยก ปิดอัตโนมัติ เปิดซ้ำ วันผิดและนอกเทอม ใช้ fixture พิกัดสังเคราะห์แยกจากห้องจริงและ rollback ทั้งหมด
+- ต้องลองกล้องถูกปฏิเสธ/สลับวิธี แป้นเลข backspace และหน้าจอบนมือถือจริงเพิ่มเติม
+
+สภาพแวดล้อมรอบนี้: unit/protocol, typecheck และ production build ผ่าน ยังไม่รัน migration/seed/RLS/SQL integration กับ PostgreSQL จริง เพราะไม่มี Docker/PostgreSQL และยังเปิด dev server ไม่ได้จากข้อจำกัด listen EPERM ตรวจหน้าล็อกอินและปุ่มแสดง/ซ่อนรหัสผ่านใน Chrome ได้แล้วผ่าน dev server ที่เปิดอยู่บนเครื่องผู้ใช้ และตรวจเลย์เอาต์พรีวิวด้วยข้อมูลตัวอย่าง แต่ยังไม่ยืนยัน flow เช็คชื่อครบกับฐานข้อมูลหรือบอร์ดจริง
+
+
+## หน้าจอและพรีวิว
+
+ทุกหน้าใช้โทนกรมท่า ขาว และฟ้าเทา ไอคอน lucide แบบเส้น เมนูมือถืออยู่ด้านล่างทั้งอาจารย์และนักศึกษา หน้าเช็คชื่อแสดงคาบที่เลือกตลอด 3 ขั้นตอน และสลับจากกล้องไปเลขได้จากด้านบน มีปุ่มแสดง/ซ่อนรหัสผ่าน รองรับ keyboard focus, Escape/Tab ใน dialog และ prefers-reduced-motion
+
+สร้างหน้าตัวอย่างออฟไลน์โดยไม่ต่อฐานข้อมูล:
+
+```sh
+npm run preview:ui
+```
+
+เปิด `output/playwright/ui/index.html` เพื่อดู 12 หน้าจอ และสลับขนาดมือถือ/คอมพิวเตอร์ พรีวิวนี้ใช้คอมโพเนนต์จริงแต่เป็น HTML สำหรับตรวจเลย์เอาต์ ปุ่มในหน้าตัวอย่างไม่บันทึกข้อมูลและไม่เปิดกล้อง/GPS
+
+Dev server ใช้ `.next/dev` ส่วน `npm run build` และ `npm start` ใช้ `.next/build` เพื่อไม่ให้ production build ทับไฟล์ JavaScript ของเว็บที่กำลังเปิดพัฒนาอยู่

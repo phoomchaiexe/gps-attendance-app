@@ -1,0 +1,2 @@
+-- Auth users and fixtures are seeded via scripts/seed.mjs after migrations.
+-- Do not add passwords or device secrets here.

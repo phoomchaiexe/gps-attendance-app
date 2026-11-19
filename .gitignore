@@ -1,0 +1,11 @@
+.next/
+node_modules/
+.env*
+!.env.example
+supabase/.temp/
+supabase/.branches/
+.pio/
+*.tsbuildinfo
+
+# Generated layout review files
+output/playwright/
