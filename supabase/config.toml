@@ -31,5 +31,7 @@ additional_redirect_urls = ["http://localhost:3000/**"]
 jwt_expiry = 3600
 enable_signup = false
 [auth.email]
-enable_signup = false
+# Must stay true: false disables the email provider, so seeded accounts cannot log in.
+# Public sign-up is already blocked by [auth] enable_signup = false.
+enable_signup = true
 enable_confirmations = false

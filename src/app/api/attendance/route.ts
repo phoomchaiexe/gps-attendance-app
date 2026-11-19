@@ -13,6 +13,8 @@ const uuid=z.string().uuid();
 class UserError extends Error { constructor(message:string, readonly status=400) { super(message); } }
 // P0001 = RAISE EXCEPTION in our SQL functions, whose messages are written for users.
 function checked<T>({data,error}:{data:T;error:{message:string;code?:string}|null}):NonNullable<T> {if(error) throw error.code==='P0001'?new UserError(error.message):error.code==='PGRST116'?new UserError('ไม่พบข้อมูล',404):new Error(error.message);if(data===null||data===undefined) throw new UserError("ไม่พบข้อมูล",404);return data as NonNullable<T>;}
+// For writes that return no rows (update without select, void RPC): only the error matters.
+function saved({error}:{error:{message:string;code?:string}|null}) {if(error) throw error.code==='P0001'?new UserError(error.message):new Error(error.message);}
 function encryptionKey() {
  const key=process.env.DEVICE_ENCRYPTION_KEY;
  if(!key||!/^[0-9a-f]{64}$/i.test(key)) throw new Error('DEVICE_ENCRYPTION_KEY must be 64 hex characters');
@@ -96,7 +98,7 @@ export async function POST(req:NextRequest) {
    const id=uuid.parse(body.session_id);
    const session=checked(await db.from('attendance_sessions').select('teacher_id,status,end_time').eq('session_id',id).single());
    if(me.role!=='teacher'||session.teacher_id!==me.user_id) throw new UserError('ไม่มีสิทธิ์',403);
-   if(body.action==='close') {checked(await db.from('attendance_sessions').update({status:'closed'}).eq('session_id',id));return NextResponse.json({ok:true});}
+   if(body.action==='close') {saved(await db.from('attendance_sessions').update({status:'closed'}).eq('session_id',id));return NextResponse.json({ok:true});}
    if(session.status!=='active'||Date.parse(session.end_time)<=Date.now()) throw new UserError('ปิดเช็คชื่อแล้ว');
    const encrypted=checked(await db.rpc('session_secret',{sid:id}));
    const secret=decryptSecret(encrypted,encryptionKey());const now=Date.now(),counter=counterAt(now);
@@ -105,12 +107,12 @@ export async function POST(req:NextRequest) {
   if(me.role!=='admin') throw new UserError('ไม่มีสิทธิ์',403);
   if(body.action==='room') {
    const input=z.object({room_id:uuid,latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180)}).parse(body);
-   checked(await db.from('classrooms').update({default_latitude:input.latitude,default_longitude:input.longitude}).eq('room_id',input.room_id));
+   saved(await db.from('classrooms').update({default_latitude:input.latitude,default_longitude:input.longitude}).eq('room_id',input.room_id));
   } else if(body.action==='approve-location') {
-   checked(await db.rpc('approve_room_location',{suggestion:uuid.parse(body.suggestion_id),reviewer:me.user_id}));
+   saved(await db.rpc('approve_room_location',{suggestion:uuid.parse(body.suggestion_id),reviewer:me.user_id}));
   } else if(body.action==='settings') {
    const input=z.object({open_early_minutes:z.number().int().min(0).max(180),late_after_minutes:z.number().int().min(0).max(180),close_grace_minutes:z.number().int().min(0).max(180)}).parse(body);
-   checked(await db.from('attendance_settings').update(input).eq('id',true));
+   saved(await db.from('attendance_settings').update(input).eq('id',true));
   } else throw new UserError('ไม่พบคำสั่ง');
   return NextResponse.json({ok:true});
  } catch(e) {return failure(e);}
