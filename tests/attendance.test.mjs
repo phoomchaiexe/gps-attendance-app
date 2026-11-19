@@ -77,3 +77,12 @@ test('post-login redirect stays on this origin, including tab/newline tricks',as
  for(const bad of ['//evil.example','/\t/evil.example','/\n/evil.example','/\\evil.example','https://evil.example','javascript:alert(1)'])
   assert.equal(safeNext(bad,origin),'/',bad);
 });
+test('current term: inside term, between terms falls back to latest started, empty input',async()=>{
+ const {currentTerms}=await import('../src/lib/attendance/calendar.ts');
+ const rows=[{term:'1/2569',term_start:'2026-08-24',term_end:'2026-12-14'},{term:'2/2569',term_start:'2027-01-11',term_end:'2027-05-01'}];
+ assert.deepEqual(currentTerms(rows,new Date('2026-11-19T10:00:00+07:00')),['1/2569']);
+ assert.deepEqual(currentTerms(rows,new Date('2026-12-25T10:00:00+07:00')),['1/2569']);
+ assert.deepEqual(currentTerms(rows,new Date('2027-02-01T10:00:00+07:00')),['2/2569']);
+ assert.deepEqual(currentTerms(rows,new Date('2026-01-01T10:00:00+07:00')),['1/2569']);
+ assert.deepEqual(currentTerms([],new Date()),[]);
+});

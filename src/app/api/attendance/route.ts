@@ -4,6 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sameRequestOrigin } from '@/lib/attendance/origin';
+import { currentTerms } from '@/lib/attendance/calendar';
 import { codeAt, qrAt, counterAt, verify, encryptSecret, decryptSecret } from '@/lib/attendance/tokens.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -30,13 +31,22 @@ export async function GET() {
  try {
   const {client,db,me}=await context();
   // Read through authenticated RLS. Never select QR tokens, codes or encrypted secrets.
-  const [subjects,schedules,sessions,records,rooms,settings,enrollments]=await Promise.all([
-   client.from('subjects').select('*').then(checked),client.from('class_schedules').select('*').then(checked),
-   client.from('attendance_sessions').select('session_id,subject_id,room_id,teacher_id,semester,schedule_id,session_date,start_time,end_time,status,late_after_minutes').then(checked),
-   client.from('attendance_records').select('record_id,session_id,student_id,status,method,flagged,is_late,timestamp,reject_reason').then(checked),
+  // The app polls this every 10 seconds, so only the current term is returned, not the whole history.
+  const allSchedules=checked(await client.from('class_schedules').select('*'));
+  const terms=currentTerms(allSchedules);
+  const filtered=terms.length>0;
+  const schedules=filtered?allSchedules.filter(s=>terms.includes(s.term)):allSchedules;
+  const sessionQuery=client.from('attendance_sessions').select('session_id,subject_id,room_id,teacher_id,semester,schedule_id,session_date,start_time,end_time,status,late_after_minutes');
+  const recordQuery=client.from('attendance_records').select('record_id,session_id,student_id,status,method,flagged,is_late,timestamp,reject_reason,attendance_sessions!inner(semester)');
+  const enrollmentQuery=client.from('enrollments').select('*');
+  const [subjects,sessions,recordRows,rooms,settings,enrollments]=await Promise.all([
+   client.from('subjects').select('*').then(checked),
+   (filtered?sessionQuery.in('semester',terms):sessionQuery).then(checked),
+   (filtered?recordQuery.in('attendance_sessions.semester',terms):recordQuery).then(checked),
    client.from('classrooms').select('*').then(checked),client.from('attendance_settings').select('*').maybeSingle().then(({data,error})=>{if(error) throw new Error(error.message);return data??defaultSettings;}),
-   client.from('enrollments').select('*').then(checked)
+   (filtered?enrollmentQuery.in('semester',terms):enrollmentQuery).then(checked)
   ]);
+  const records=recordRows.map(({attendance_sessions:_,...record})=>record);
   const teachers=subjects.length?checked(await db.from('users').select('user_id,first_name,last_name').in('user_id',subjects.map(s=>s.teacher_id))):[];
   const students=me.role==='teacher'?checked(await client.from('users').select('user_id,user_code,first_name,last_name').eq('role','student')):[];
   const suggestions=me.role==='admin'?checked(await client.from('location_suggestions').select('*').eq('status','pending')):[];
