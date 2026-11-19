@@ -85,4 +85,6 @@ test('current term: inside term, between terms falls back to latest started, emp
  assert.deepEqual(currentTerms(rows,new Date('2027-02-01T10:00:00+07:00')),['2/2569']);
  assert.deepEqual(currentTerms(rows,new Date('2026-01-01T10:00:00+07:00')),['1/2569']);
  assert.deepEqual(currentTerms([],new Date()),[]);
+ const {termOrder}=await import('../src/lib/attendance/calendar.ts');
+ assert.deepEqual(['1/2569','3/2568','2/2569','1/2570'].sort((a,b)=>termOrder(b)-termOrder(a)),['1/2570','2/2569','1/2569','3/2568']);
 });

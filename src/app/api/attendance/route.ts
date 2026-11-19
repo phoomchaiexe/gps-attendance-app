@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sameRequestOrigin } from '@/lib/attendance/origin';
-import { currentTerms } from '@/lib/attendance/calendar';
+import { currentTerms, termOrder } from '@/lib/attendance/calendar';
 import { codeAt, qrAt, counterAt, verify, encryptSecret, decryptSecret } from '@/lib/attendance/tokens.mjs';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
@@ -27,13 +27,17 @@ async function context() {
  const me=checked(await db.from('users').select('*').eq('auth_id',user.id).eq('is_active',true).single());
  return {client,db,me};
 }
-export async function GET() {
+const termParam=z.string().regex(/^[1-3]\/[0-9]{4}$/);
+export async function GET(req:NextRequest) {
  try {
   const {client,db,me}=await context();
   // Read through authenticated RLS. Never select QR tokens, codes or encrypted secrets.
   // The app polls this every 10 seconds, so only the current term is returned, not the whole history.
   const allSchedules=checked(await client.from('class_schedules').select('*'));
-  const terms=currentTerms(allSchedules);
+  // Reports may ask for an earlier term with ?term=1/2569; anything not in the visible schedules falls back to the current term.
+  const available=[...new Set(allSchedules.map(x=>x.term as string))].sort((a,b)=>termOrder(b)-termOrder(a));
+  const requested=termParam.safeParse(req.nextUrl.searchParams.get('term'));
+  const terms=requested.success&&available.includes(requested.data)?[requested.data]:currentTerms(allSchedules);
   const filtered=terms.length>0;
   const schedules=filtered?allSchedules.filter(s=>terms.includes(s.term)):allSchedules;
   const sessionQuery=client.from('attendance_sessions').select('session_id,subject_id,room_id,teacher_id,semester,schedule_id,session_date,start_time,end_time,status,late_after_minutes');
@@ -50,7 +54,7 @@ export async function GET() {
   const teachers=subjects.length?checked(await db.from('users').select('user_id,first_name,last_name').in('user_id',subjects.map(s=>s.teacher_id))):[];
   const students=me.role==='teacher'?checked(await client.from('users').select('user_id,user_code,first_name,last_name').eq('role','student')):[];
   const suggestions=me.role==='admin'?checked(await client.from('location_suggestions').select('*').eq('status','pending')):[];
-  return NextResponse.json({me,subjects,schedules,sessions,records,rooms,settings,enrollments,teachers,students,suggestions,serverNow:Date.now()},{headers:{'Cache-Control':'no-store'}});
+  return NextResponse.json({me,subjects,schedules,sessions,records,rooms,settings,enrollments,teachers,students,suggestions,terms:available,term:terms[0]??null,serverNow:Date.now()},{headers:{'Cache-Control':'no-store'}});
  } catch(e) {return failure(e);}
 }
 const checkIn=z.object({action:z.literal('check-in'),session_id:uuid,method:z.enum(['qr_gps','code_gps']),credential:z.string().min(1).max(200),latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180),accuracy:z.number().finite().min(0).max(100000)});

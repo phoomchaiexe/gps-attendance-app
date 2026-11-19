@@ -20,3 +20,5 @@ export function currentTerms(schedules: {term:string;term_start:string;term_end:
  const latest=started[0]??[...schedules].sort((a,b)=>a.term_start.localeCompare(b.term_start))[0];
  return latest?[latest.term]:[];
 }
+// Sort key for "semester/year" terms such as "1/2569": year first, then semester.
+export function termOrder(term: string): number { const [semester,year]=term.split('/').map(Number); return year*10+semester; }
