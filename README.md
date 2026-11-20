@@ -93,9 +93,9 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f supabase/tests/attendance.sql
 - SQL integration: ห้องไม่มีพิกัด เหตุผลนอกตาราง GPS นอกรัศมี lock 5 ครั้ง/ปลดหลังหมดเวลา ล็อกสะสม 10 นาที rate limit 10 ครั้ง/นาที rejected logs มาสาย เช็คซ้ำ คาบแยก ปิดอัตโนมัติ เปิดซ้ำ วันผิดและนอกเทอม ใช้ fixture พิกัดสังเคราะห์แยกจากห้องจริงและ rollback ทั้งหมด
 - ต้องลองกล้องถูกปฏิเสธ/สลับวิธี แป้นเลข backspace และหน้าจอบนมือถือจริงเพิ่มเติม
 
-สภาพแวดล้อมรอบนี้: unit/protocol, typecheck และ production build ผ่าน ยังไม่รัน migration/seed/RLS/SQL integration กับ PostgreSQL จริง เพราะไม่มี Docker/PostgreSQL และยังเปิด dev server ไม่ได้จากข้อจำกัด listen EPERM ตรวจหน้าล็อกอินและปุ่มแสดง/ซ่อนรหัสผ่านใน Chrome ได้แล้วผ่าน dev server ที่เปิดอยู่บนเครื่องผู้ใช้ และตรวจเลย์เอาต์พรีวิวด้วยข้อมูลตัวอย่าง แต่ยังไม่ยืนยัน flow เช็คชื่อครบกับฐานข้อมูลหรือบอร์ดจริง
+ผลทดสอบล่าสุด (19 พ.ย. 2569): unit/protocol, typecheck และ production build ผ่าน รันกับ Supabase ในเครื่อง (Docker) แล้ว ได้แก่ migration ทั้งหมดรวม `202611190001_hardening.sql`, test:db (RLS), SQL integration และเช็คชื่อ end-to-end ผ่าน dev server
 
-migration `202611190001_hardening.sql` (rate limit + ล็อกสะสม) และเคส SQL ที่เพิ่มคู่กันยังไม่ได้รันกับ PostgreSQL จริง ต้องรัน `npm run db:reset` แล้วตามด้วย SQL integration ก่อนใช้งาน
+ยังไม่ได้ทดสอบ: มือถือจริงผ่าน HTTPS (กล้อง/GPS/แป้นเลข) และบอร์ดหน้าห้องจริง
 
 
 ## หน้าจอและพรีวิว
