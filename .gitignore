@@ -9,3 +9,10 @@ supabase/.branches/
 
 # Generated layout review files
 output/playwright/
+
+# Local assistant outputs
+Claude outputs/
+repo-export/
+# Board secrets
+firmware/attendance_board/config.h
+.DS_Store
