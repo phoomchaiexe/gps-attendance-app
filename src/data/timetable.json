@@ -1,5 +1,5 @@
 {
- "term":"1/2569","term_start":"2026-08-24","term_end":"2026-12-14","end_times_estimated":true,
+ "term":"1/2569","term_start":"2026-08-24","term_end":"2026-12-14",
  "settings":{"open_early_minutes":15,"late_after_minutes":15,"close_grace_minutes":10},
  "teachers":[["teacher01","สุภาวดี","ศรีสุวรรณ"],["teacher02","กิตติพงษ์","ชัยประเสริฐ"],["teacher03","วราภรณ์","วัฒนกุล"],["teacher04","ณัฐวุฒิ","เจริญผล"]],
  "rooms":["11-12A08","11-1103","05-0901","01-1103","11-0905","11-1107"],
