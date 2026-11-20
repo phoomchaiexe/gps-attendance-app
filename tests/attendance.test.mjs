@@ -88,3 +88,24 @@ test('current term: inside term, between terms falls back to latest started, emp
  const {termOrder}=await import('../src/lib/attendance/calendar.ts');
  assert.deepEqual(['1/2569','3/2568','2/2569','1/2570'].sort((a,b)=>termOrder(b)-termOrder(a)),['1/2570','2/2569','1/2569','3/2568']);
 });
+
+test('GPS spoofing flags', async () => {
+ const { gpsFlags, FLAG_STILL, FLAG_ACCURACY, FLAG_CLOCK } = await import('../src/lib/attendance/gps-flags.ts');
+ const now = Date.UTC(2026, 10, 20, 2);
+ const at = (i, lat, lng, accuracy) => ({ latitude: lat, longitude: lng, accuracy, timestamp: now - (5 - i) * 1000 });
+ const jitter = [0, 1, 2, 3].map(i => at(i, 13.8 + i * 1e-6, 100.5 - i * 1e-6, 8.4 + i));
+ assert.deepEqual(gpsFlags(jitter, now), []);
+ assert.deepEqual(gpsFlags([], now), []);
+ // A precise fix that never moves looks like a dropped pin.
+ assert.deepEqual(gpsFlags([0, 1, 2].map(i => at(i, 13.8, 100.5, 5)), now), [FLAG_STILL]);
+ // Coarse Wi-Fi fixes repeat legitimately indoors, and fewer than 3 readings prove nothing.
+ assert.deepEqual(gpsFlags([0, 1, 2].map(i => at(i, 13.8, 100.5, 35)), now), []);
+ assert.deepEqual(gpsFlags([0, 1].map(i => at(i, 13.8, 100.5, 5)), now), []);
+ // A precise fix re-served unchanged for the whole read is as suspicious as a frozen one.
+ assert.deepEqual(gpsFlags([at(0, 13.8, 100.5, 5), at(0, 13.8, 100.5, 5), at(0, 13.8, 100.5, 5)], now), [FLAG_STILL]);
+ // iPhones report round accuracies such as 5 or 65; only sub-metre accuracy is implausible.
+ assert.deepEqual(gpsFlags([at(0, 13.8, 100.5, 65)], now), []);
+ assert.deepEqual(gpsFlags([at(0, 13.8, 100.5, 0.5)], now), [FLAG_ACCURACY]);
+ assert.deepEqual(gpsFlags([{ ...at(0, 13.8, 100.5, 8), timestamp: now - 3 * 60 * 1000 }], now), [FLAG_CLOCK]);
+ assert.deepEqual(gpsFlags([{ ...at(0, 13.8, 100.5, 8), timestamp: now + 90 * 1000 }], now), []);
+});

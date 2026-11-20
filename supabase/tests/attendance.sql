@@ -2,7 +2,7 @@
 -- All fixtures use synthetic coordinates, and the entire test is rolled back.
 begin;
 do $$
-declare teacher uuid; student uuid; subject uuid; room uuid; schedule uuid; sid uuid; sid2 uuid; sid3 uuid; result jsonb; amount integer;
+declare teacher uuid; student uuid; subject uuid; room uuid; schedule uuid; sid uuid; sid2 uuid; sid3 uuid; sid4 uuid; student2 uuid; student3 uuid; result jsonb; amount integer;
  today date:=(now() at time zone 'Asia/Bangkok')::date;
 begin
  select user_id into teacher from public.users where user_code='teacher01';
@@ -69,6 +69,21 @@ begin
  select count(*) into amount from public.attendance_records where session_id=sid3 and student_id=student;
  if amount<>10 then raise exception 'Rate-limited attempt was logged'; end if;
  update public.attendance_sessions set status='closed' where session_id=sid3;
+ -- GPS flags warn but never reject: identical precise coordinates flag both students,
+ -- and reasons computed by the API (gps-flags.ts) are stored as sent.
+ select user_id into student2 from public.users where user_code='68001022';
+ select user_id into student3 from public.users where user_code='68001023';
+ insert into public.enrollments(student_id,subject_id,semester) values(student2,subject,'1/2569'),(student3,subject,'1/2569');
+ sid4:=public.open_attendance(teacher,null,subject,room,100,'ทดสอบธง GPS',100,'fixture');
+ result:=public.submit_attendance(sid4,student,'qr_gps',true,0.0001,0.0001,5);
+ if result->>'ok'<>'true' or exists(select 1 from public.attendance_records where session_id=sid4 and flagged) then raise exception 'First check-in flagged: %',result; end if;
+ result:=public.submit_attendance(sid4,student2,'qr_gps',true,0.0001,0.0001,5);
+ if result->>'ok'<>'true' then raise exception 'Duplicate coordinates must not reject: %',result; end if;
+ select count(*) into amount from public.attendance_records where session_id=sid4 and status='present' and flagged and flag_reasons='{พิกัดซ้ำกับนักศึกษาคนอื่น}';
+ if amount<>2 then raise exception 'Expected both duplicate records flagged once, got %',amount; end if;
+ result:=public.submit_attendance(sid4,student3,'qr_gps',true,0.0002,0.0001,5,array['พิกัดนิ่งผิดปกติ']);
+ if result->>'ok'<>'true' or not exists(select 1 from public.attendance_records where session_id=sid4 and student_id=student3 and flagged and flag_reasons='{พิกัดนิ่งผิดปกติ}') then raise exception 'API flag not stored: %',result; end if;
+ update public.attendance_sessions set status='closed' where session_id=sid4;
  -- A schedule can have only one session per date, including closed sessions.
  update public.attendance_sessions set schedule_id=schedule where session_id=sid;
  begin

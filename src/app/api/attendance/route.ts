@@ -6,6 +6,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sameRequestOrigin } from '@/lib/attendance/origin';
 import { currentTerms, termOrder } from '@/lib/attendance/calendar';
 import { codeAt, qrAt, counterAt, verify, encryptSecret, decryptSecret } from '@/lib/attendance/tokens.mjs';
+import { gpsFlags, MAX_SAMPLES } from '@/lib/attendance/gps-flags';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 const uuid=z.string().uuid();
@@ -43,7 +44,7 @@ export async function GET(req:NextRequest) {
   const filtered=terms.length>0;
   const schedules=filtered?allSchedules.filter(s=>terms.includes(s.term)):allSchedules;
   const sessionQuery=client.from('attendance_sessions').select('session_id,subject_id,room_id,teacher_id,semester,schedule_id,session_date,start_time,end_time,status,late_after_minutes');
-  const recordQuery=client.from('attendance_records').select('record_id,session_id,student_id,status,method,flagged,is_late,timestamp,reject_reason,attendance_sessions!inner(semester)');
+  const recordQuery=client.from('attendance_records').select('record_id,session_id,student_id,status,method,flagged,flag_reasons,is_late,timestamp,reject_reason,attendance_sessions!inner(semester)');
   const enrollmentQuery=client.from('enrollments').select('*');
   const [subjects,sessions,recordRows,rooms,settings,enrollments]=await Promise.all([
    client.from('subjects').select('*').then(checked),
@@ -59,7 +60,7 @@ export async function GET(req:NextRequest) {
   return NextResponse.json({me,subjects,schedules,sessions,records,rooms,settings,enrollments,teachers,students,suggestions,terms:available,term:terms[0]??null,serverNow:Date.now()},{headers:{'Cache-Control':'no-store'}});
  } catch(e) {return failure(e);}
 }
-const checkIn=z.object({action:z.literal('check-in'),session_id:uuid,method:z.enum(['qr_gps','code_gps']),credential:z.string().min(1).max(200),latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180),accuracy:z.number().finite().min(0).max(100000)});
+const checkIn=z.object({action:z.literal('check-in'),session_id:uuid,method:z.enum(['qr_gps','code_gps']),credential:z.string().min(1).max(200),samples:z.array(z.object({latitude:z.number().finite().min(-90).max(90),longitude:z.number().finite().min(-180).max(180),accuracy:z.number().finite().min(0).max(100000),timestamp:z.number().finite()})).min(1).max(MAX_SAMPLES)});
 export async function POST(req:NextRequest) {
  try {
   let browserOrigin:string;
@@ -84,7 +85,9 @@ export async function POST(req:NextRequest) {
    if(!encrypted) throw new UserError('ไม่พบข้อมูล session');
    const secret=decryptSecret(encrypted,encryptionKey());
    const valid=verify(secret,input.session_id,input.credential,input.method);
-   const result=checked(await db.rpc('submit_attendance',{sid:input.session_id,student:me.user_id,method_value:input.method,credential_valid:valid,lat:input.latitude,lng:input.longitude,accuracy:input.accuracy}));
+   // The latest reading is the check-in position; earlier ones only feed the spoofing flags.
+   const position=input.samples[input.samples.length-1];
+   const result=checked(await db.rpc('submit_attendance',{sid:input.session_id,student:me.user_id,method_value:input.method,credential_valid:valid,lat:position.latitude,lng:position.longitude,accuracy:position.accuracy,flags:gpsFlags(input.samples,Date.now())}));
    return NextResponse.json(result);
   }
   if(body.action==='open') {

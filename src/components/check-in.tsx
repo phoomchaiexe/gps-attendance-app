@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Camera, Check, CircleCheck, Clock3, Hash, LocateFixed, MapPin, RotateCcw, ScanLine, ShieldCheck } from 'lucide-react';
 import { action, type Data } from '@/lib/attendance/types';
 import { loadLibrary, scannerLibrary, type Scanner } from '@/lib/attendance/browser-libraries';
+import { MAX_SAMPLES, READ_INTERVAL_MS, READ_MAX_MS, READ_MIN_MS, type GpsSample } from '@/lib/attendance/gps-flags';
 import { Brand, Notice, Spinner } from './interface';
 
 type Step = 'choose' | 'qr' | 'code' | 'gps' | 'confirm' | 'result' | 'failed';
@@ -19,7 +20,8 @@ export function CheckIn({ sessionId, token }: { sessionId: string; token?: strin
  const [digits, setDigits] = useState(['', '', '', '']);
  const [message, setMessage] = useState('');
  const [busy, setBusy] = useState(false);
- const [position, setPosition] = useState<GeolocationCoordinates>();
+ const [samples, setSamples] = useState<GpsSample[]>([]);
+ const stopReading = useRef<() => void>(undefined);
  const [cameraState, setCameraState] = useState<CameraState>('starting');
  const [cameraAttempt, setCameraAttempt] = useState(0);
  const [now, setNow] = useState(Date.now());
@@ -90,18 +92,44 @@ export function CheckIn({ sessionId, token }: { sessionId: string; token?: strin
   if (numbers) inputs.current[Math.min(3, index + numbers.length)]?.focus();
   if (next.every(Boolean)) { setCredential(next.join('')); setMethod('code_gps'); move('gps'); }
  }
- async function locate() {
+ useEffect(() => () => stopReading.current?.(), []);
+ // Read GPS for a few seconds instead of once: real fixes jitter, mock pins usually do not (see gps-flags.ts).
+ // Poll with fresh one-shot reads; watchPosition only reports changes, so a frozen pin would yield one reading.
+ function locate() {
   if (!navigator.geolocation) { setMessage('เปิดตำแหน่งไม่ได้ ลองใช้เบราว์เซอร์บนมือถือผ่าน HTTPS'); return; }
   setBusy(true); setMessage('');
-  navigator.geolocation.getCurrentPosition(result => { setPosition(result.coords); setStep('confirm'); setBusy(false); }, error => {
-   setMessage(error.code === 1 ? 'ยังไม่ได้อนุญาตตำแหน่ง เปิดสิทธิ์ตำแหน่งในการตั้งค่าเว็บไซต์ แล้วลองอีกครั้ง' : 'อ่านตำแหน่งไม่ได้ เปิด GPS แล้วลองอีกครั้ง'); setBusy(false);
-  }, { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  const readings: GpsSample[] = [], started = Date.now();
+  let done = false, next: ReturnType<typeof setTimeout> | undefined;
+  const stop = () => { done = true; clearTimeout(next); clearTimeout(maxTimer); stopReading.current = undefined; };
+  const finish = (error?: GeolocationPositionError) => {
+   if (done) return;
+   stop();
+   if (readings.length) { setSamples(readings); setStep('confirm'); }
+   else setMessage(error?.code === 1 ? 'ยังไม่ได้อนุญาตตำแหน่ง เปิดสิทธิ์ตำแหน่งในการตั้งค่าเว็บไซต์ แล้วลองอีกครั้ง' : 'อ่านตำแหน่งไม่ได้ เปิด GPS แล้วลองอีกครั้ง');
+   setBusy(false);
+  };
+  const read = () => navigator.geolocation.getCurrentPosition(result => {
+   if (done) return;
+   const { latitude, longitude, accuracy } = result.coords;
+   readings.push({ latitude, longitude, accuracy, timestamp: result.timestamp });
+   if (Date.now() - started >= READ_MIN_MS || readings.length >= MAX_SAMPLES) finish();
+   else next = setTimeout(read, READ_INTERVAL_MS);
+  }, error => {
+   if (done) return;
+   // Permission denied or no fix at all ends the read; a failed later read keeps what we have.
+   if (error.code === 1 || !readings.length && Date.now() - started >= READ_MAX_MS) finish(error);
+   else if (readings.length) finish();
+   else next = setTimeout(read, READ_INTERVAL_MS);
+  }, { enableHighAccuracy: true, timeout: READ_MAX_MS, maximumAge: 0 });
+  const maxTimer = setTimeout(() => finish(), READ_MAX_MS);
+  stopReading.current = stop;
+  read();
  }
  async function submit() {
-  if (!position || submitted.current) return;
+  if (!samples.length || submitted.current) return;
   submitted.current = true; setBusy(true); setMessage('');
   try {
-   const result = await action({ action: 'check-in', session_id: sessionId, method, credential, latitude: position.latitude, longitude: position.longitude, accuracy: position.accuracy });
+   const result = await action({ action: 'check-in', session_id: sessionId, method, credential, samples });
    setMessage(result.message); setStep(result.ok ? 'result' : 'failed');
   } catch (error) { setMessage((error as Error).message); setStep('failed'); }
   finally { submitted.current = false; setBusy(false); }
@@ -113,14 +141,14 @@ export function CheckIn({ sessionId, token }: { sessionId: string; token?: strin
  const available = !!data && data.me.role === 'student' && !!open;
  const unavailable = data?.me.role !== 'student' ? 'หน้านี้สำหรับนักศึกษา' : !session ? 'ไม่พบคาบเรียนนี้' : 'คาบนี้ปิดเช็คชื่อแล้ว';
  return <CheckInScreen step={step} method={method} message={message} busy={busy} loading={loading} available={available}
-  unavailable={unavailable} cameraState={cameraState} digits={digits} accuracy={position?.accuracy}
+  unavailable={unavailable} cameraState={cameraState} digits={digits} accuracy={samples.at(-1)?.accuracy}
   subjectCode={subject?.subject_code} subjectName={subject?.subject_name} room={room?.room_name}
   period={session ? `${schedule?.start_time.slice(0, 5) ?? formatTime(session.start_time)} – ${schedule?.end_time.slice(0, 5) ?? formatTime(session.end_time)}` : undefined}
   sessionDate={session ? new Date(`${session.session_date}T12:00:00+07:00`).toLocaleDateString('th-TH', { dateStyle: 'long', timeZone: 'Asia/Bangkok' }) : undefined}
   onMove={move} onNumeric={numeric} inputRef={(element, index) => { inputs.current[index] = element; }}
   onBackspace={index => { const next = [...digits]; if (next[index]) next[index] = ''; else if (index > 0) { next[index - 1] = ''; inputs.current[index - 1]?.focus(); } setDigits(next); }}
   onLocate={locate} onSubmit={submit} onCameraRetry={() => { setMessage(''); setCameraAttempt(n => n + 1); }}
-  onRetry={() => { setDigits(['', '', '', '']); setPosition(undefined); move('choose'); }} />;
+  onRetry={() => { setDigits(['', '', '', '']); setSamples([]); move('choose'); }} />;
 }
 
 type ScreenProps = {
